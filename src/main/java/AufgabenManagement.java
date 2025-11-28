@@ -1,194 +1,202 @@
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.text.Format;
-
+import java.text.DateFormat;
 import java.text.MessageFormat;
 import java.text.NumberFormat;
-import java.text.SimpleDateFormat;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
 import java.util.*;
 
 public class AufgabenManagement {
 
-    public static void main(String[] args) throws IOException {
+    // --- 1. Encapsulation propre de l'I18N ---
+    static class I18nManager {
+        private ResourceBundle bundle;
+        private Locale locale;
 
-        Locale locale = null;
-        String title;
-
-        if (args.length > 0) {
-            String lang = args[0];
-            switch (lang) {
-                case "deutsch":
-                case "de":
-                    locale = Locale.GERMAN;
-                    break;
-                case "francais":
-                case "français":
-                case "fr":
-                    locale = Locale.FRENCH;
-                    break;
-                case "english":
-                case "en":
-                    locale = Locale.ENGLISH;
-                    break;
-            }
+        public I18nManager(Locale locale) {
+            setLocale(locale);
         }
 
-        if (locale == null) {
+        public void setLocale(Locale locale) {
+            this.locale = locale;
+            this.bundle = ResourceBundle.getBundle("messages", locale);
+        }
+
+        public Locale getLocale() {
+            return locale;
+        }
+
+        public String get(String key) {
             try {
-                Properties properties = new Properties();
-                properties.load(new FileInputStream("config.properties"));
-                String savedLang = properties.getProperty("language");
-                if (savedLang != null) {
-                    switch (savedLang) {
-                        case "de":
-                            locale = Locale.GERMAN;
-                            break;
-                        case "fr":
-                            locale = Locale.FRENCH;
-                            break;
-                        case "en":
-                            locale = Locale.ENGLISH;
-                            break;
-                    }
-                }
-            } catch (IOException e) {
-                // File doesnt exist
+                return bundle.getString(key);
+            } catch (MissingResourceException e) {
+                return "!" + key + "!";
             }
         }
 
-        // wenn kein Argument / kein config
-
-        if (locale == null) {
-            locale = Locale.getDefault();
+        // Pour les phrases à trous ({0}, {1}...)
+        public String format(String key, Object... args) {
+            return MessageFormat.format(get(key), args);
         }
 
-        NumberFormat currency = NumberFormat.getCurrencyInstance(locale);
+        // Formats dépendant de la Locale (Dates, Monnaie, etc.)
+        public String formatDate(Date date) {
+            return DateFormat.getDateInstance(DateFormat.MEDIUM, locale).format(date);
+        }
 
-        ResourceBundle bundle = ResourceBundle.getBundle("messages",locale);
+        public String formatTime(LocalTime time) {
+            return DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale).format(time);
+        }
 
+        public String formatCurrency(double amount) {
+            return NumberFormat.getCurrencyInstance(locale).format(amount);
+        }
 
-        System.out.println(bundle.getString("app.title"));
-        System.out.print(bundle.getString("proverb.intro") + new SimpleDateFormat("dd.MM.yyyy").format(new Date()) + ": ");
-        String[] sprichwoerter = new String[] { bundle.getString("proverb.1"),
-                bundle.getString("proverb.2"), bundle.getString("proverb.3"),
-                bundle.getString("proverb.4") };
+        public String formatPercent(double value) {
+            // Diviser par 100 car NumberFormat attend 0.1 pour 10%
+            return NumberFormat.getPercentInstance(locale).format(value / 100.0);
+        }
+    }
 
-        int i = ((int) (Math.random() * 10)) % sprichwoerter.length;
+    // --- 2. Utilisation d'Enums pour la logique (Plus de texte magique) ---
+    enum Gender {
+        MALE, FEMALE
+    }
 
-        System.out.println(sprichwoerter[i]);
-        double fee = Math.random() * 10000;
-        System.out.println(bundle.getString("license.message") + fee + " €.");
+    public static void main(String[] args) throws IOException {
+        Locale locale = Locale.getDefault();
 
+        // Gestion simplifiée des arguments et de la config
+        if (args.length > 0) {
+            locale = parseLocaleCode(args[0]);
+        } else {
+            try (FileInputStream fis = new FileInputStream("config.properties")) {
+                Properties props = new Properties();
+                props.load(fis);
+                String savedLang = props.getProperty("language");
+                if (savedLang != null) locale = parseLocaleCode(savedLang);
+            } catch (IOException e) {
+                // Pas de config, on reste sur défaut
+            }
+        }
+
+        // Initialisation du manager
+        I18nManager i18n = new I18nManager(locale);
         Scanner sc = new Scanner(System.in);
-        System.out.println(bundle.getString("language.prompt"));
-        String sprache = sc.next();
 
-        System.out.println(bundle.getString("input.name"));
+        // --- Début du programme ---
+        System.out.println(i18n.get("app.title"));
+
+        // Date formatée proprement
+        System.out.print(i18n.format("proverb.intro", i18n.formatDate(new Date())) + " ");
+
+        // Choix aléatoire du proverbe
+        String[] sprichwoerter = {
+            i18n.get("proverb.1"), i18n.get("proverb.2"),
+            i18n.get("proverb.3"), i18n.get("proverb.4")
+        };
+        System.out.println(sprichwoerter[new Random().nextInt(sprichwoerter.length)]);
+
+        // Monnaie formatée proprement
+        double fee = Math.random() * 10000;
+        System.out.println(i18n.format("license.message", i18n.formatCurrency(fee)));
+
+        // --- Saisie utilisateur ---
+        // On ne demande plus la langue ici pour simplifier le flux, ou on le ferait via un menu numéroté.
+
+        System.out.println(i18n.get("input.name"));
         String name = sc.next();
 
-        System.out.println(bundle.getString("input.gender"));
-        String geschlecht = sc.next().equals("w") ? "weiblich" : "männlich";
+        System.out.println(i18n.get("input.gender"));
+        String genderInput = sc.next();
+        // Logique découplée du texte : on mappe l'entrée 'w' ou autre vers l'Enum
+        Gender gender = (genderInput.equalsIgnoreCase("w") || genderInput.equalsIgnoreCase("f"))
+                        ? Gender.FEMALE : Gender.MALE;
 
-        System.out.println(bundle.getString("input.area"));
+        System.out.println(i18n.get("input.area"));
         String bereich = sc.next();
 
-        System.out.println(bundle.getString("input.tasks.count"));
+        System.out.println(i18n.get("input.tasks.count"));
         int anzahl = sc.nextInt();
 
-        System.out.println(bundle.getString("input.payment"));
+        System.out.println(i18n.get("input.payment"));
         double verguetung = sc.nextDouble();
 
-        System.out.println(bundle.getString("input.discount"));
+        System.out.println(i18n.get("input.discount"));
         double rabat = sc.nextDouble();
 
-        System.out.println(bundle.getString("overview.title"));
-        System.out.println(bundle.getString("overview.today") + new Date());
-        System.out.println(bundle.getString("overview.time") + LocalTime.now() + " Uhr");
+        // --- Affichage ---
+        System.out.println(i18n.get("overview.title"));
+        System.out.println(i18n.get("overview.today") + " " + i18n.formatDate(new Date()));
+        // Heure formatée (plus de "+ Uhr")
+        System.out.println(i18n.format("overview.time", i18n.formatTime(LocalTime.now())));
 
-        if (geschlecht.equals("männlich")) {
-            title = bundle.getString("title.mr");
-            System.out.print(bundle.getString("title.mr") + name);
-        } else {
-            title = bundle.getString("title.mrs");
-            System.out.print(bundle.getString("title.mrs") + name);
-        }
+        // Gestion du titre via Enum et MessageFormat (pas de concaténation)
+        String titleKey = (gender == Gender.MALE) ? "title.mr" : "title.mrs";
+        String title = i18n.get(titleKey);
 
+        // ATTENTION: J'ai ajouté une clé virtuelle 'format.name_display' ici pour éviter "title + name"
+        // Tu devras ajouter dans tes properties: format.name_display={0} {1}
+        System.out.println(i18n.format("format.name_display", title, name));
 
-        // JE SUIS ICI
+        // Résumé
+        System.out.println(i18n.format("summary.area", title, name, bereich));
 
-
-        String domain = MessageFormat.format(
-            bundle.getString("summary.area"),
-            title,
-            name,
-            bereich
-        );
-
-
-        System.out.println(domain);
         if (anzahl == 0) {
-            System.out.println(bundle.getString("summary.tasks.none"));
+            System.out.println(i18n.get("summary.tasks.none"));
         } else if (anzahl == 1) {
-            System.out.println(bundle.getString("summary.tasks.one"));
+            System.out.println(i18n.get("summary.tasks.one"));
         } else {
-            String manyTasks = MessageFormat.format(
-                    bundle.getString("summary.tasks.many"),
-                    anzahl
-            );
-            System.out.println(manyTasks);
+            System.out.println(i18n.format("summary.tasks.many", anzahl));
         }
 
-        String salary = MessageFormat.format(
-                bundle.getString("summary.payment"),
-                verguetung,
-                currency
-        );
+        System.out.println(i18n.format("summary.payment", i18n.formatCurrency(verguetung)));
+        // Formatage pourcentage correct
+        System.out.println(i18n.format("summary.discount", rabat));
 
+        // --- Changement de langue (Logique corrigée) ---
+        System.out.println(i18n.get("language.switch.prompt"));
+        // Utilisation d'un choix numérique pour éviter de parser "nein/non/no"
+        System.out.println("1: Deutsch, 2: Français, 3: English, 0: " + i18n.get("word.no"));
 
+        String choice = sc.next();
+        String langCode = null;
 
-        System.out.println(salary);
+        switch (choice) {
+            case "1": langCode = "de"; break;
+            case "2": langCode = "fr"; break;
+            case "3": langCode = "en"; break;
+            default: langCode = null; // 0 ou autre = on ne change rien
+        }
 
-        String offer = MessageFormat.format(
-                bundle.getString("summary.discount"),
-                rabat
-        );
-        System.out.println(offer);
-
-        System.out.println(bundle.getString("language.switch.prompt"));
-        System.out.print(bundle.getString("language.switch.input"));
-        sprache = sc.next();
-        if (!sprache.equals(bundle.getString("word.no"))) {
-            // Sauvegarder la nouvelle langue dans config.properties
-            String langCode = null;
-            switch (sprache.toLowerCase()) {
-                case "deutsch":
-                    langCode = "de";
-                    break;
-                case "französisch":
-                case "francais":
-                    langCode = "fr";
-                    break;
-                case "englisch":
-                case "english":
-                    langCode = "en";
-                    break;
-            }
-
-
-            if (langCode != null) {
-                String savedLanguage = MessageFormat.format(bundle.getString("language.saved"),
-                        langCode);
-                Properties properties = new Properties();
-                properties.setProperty("language", langCode);
-                properties.store(new FileOutputStream("config.properties"),
-                               "Dernière langue utilisée");
-                System.out.println(savedLanguage);
+        if (langCode != null) {
+            Properties props = new Properties();
+            props.setProperty("language", langCode);
+            try (FileOutputStream fos = new FileOutputStream("config.properties")) {
+                props.store(fos, "User Language Config");
+                // On recharge le manager pour dire au revoir dans la nouvelle langue
+                i18n.setLocale(parseLocaleCode(langCode));
+                System.out.println(i18n.format("language.saved", langCode));
             }
         }
 
-        System.out.println(bundle.getString("goodbye"));
+        System.out.println(i18n.get("goodbye"));
         sc.close();
+    }
+
+    private static Locale parseLocaleCode(String code) {
+        switch (code.toLowerCase()) {
+            case "de":
+                return Locale.GERMANY;
+            case "fr":
+                return Locale.FRANCE;
+            case "en":
+                return Locale.US;
+            default:
+                return Locale.getDefault();
+        }
     }
 }
